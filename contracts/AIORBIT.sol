@@ -28,34 +28,53 @@ contract AIORBIT is ERC721, Ownable {
 
     constructor(string memory name, string memory symbol) ERC721(name, symbol) {}
 
-    function generateSVG(uint256 _tokenId) internal pure returns (string memory) {
-        // Generate random hue and saturation values based on the token ID
+    struct CommonValues {
+        uint256 hue;
+        uint256 rotationSpeed;
+        uint256 colorChangeSpeed;
+        uint256 numCircles;
+        uint256[] radius;
+        uint256[] distance;
+    }
+
+    function mint(uint256 _numTokens) public {
+        require(_totalTokensMinted.current() < MAX_TOKENS, "All tokens have been minted");
+        // require(balanceOf(msg.sender) + _numTokens <= MAX_TOKENS_PER_WALLET, "Cannot mint more tokens than allowed per wallet");
+
+        for (uint256 i = 0; i < _numTokens; i++) {
+            uint256 tokenId = _totalTokensMinted.current() + 1;
+            _safeMint(msg.sender, tokenId);
+            _totalTokensMinted.increment();
+        }
+    }
+
+    function royaltyInfo(uint256 _salePrice) external view returns (address receiver, uint256 royaltyAmount) {
+        receiver = owner();
+        royaltyAmount = (_salePrice * ROYALTY_FEE_PERCENT) / 100;
+    }
+
+    function generateCommonValues(uint256 _tokenId) internal pure returns (CommonValues memory) {
         uint256 hue = uint256(keccak256(abi.encodePacked(_tokenId, "hue"))) % 360;
-        uint256 sat = uint256(keccak256(abi.encodePacked(_tokenId, "sat"))) % 50 + 50;
+        uint256 rotationSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "rotationSpeed"))) % 30 + 1;
+        uint256 colorChangeSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "colorChangeSpeed"))) % 10 + 1;
 
-        // Generate the fill color string
-        string memory color = string(abi.encodePacked("hsl(", Strings.toString(hue), ",", Strings.toString(sat), "%,54%)"));
-
-        // Generate random number of circles between 3 and 5
         uint256 numCircles = uint256(keccak256(abi.encodePacked(_tokenId, "numCircles"))) % 3 + 3;
-
-        // Generate random radius values for each circle
         uint256[] memory radius = new uint256[](numCircles);
+        uint256[] memory distance = new uint256[](numCircles);
+
         for (uint256 i = 0; i < numCircles; i++) {
             radius[i] = uint256(keccak256(abi.encodePacked(_tokenId, "radius", i))) % 40 + 20;
-        }
-
-        // Generate random distance values for each circle
-        uint256[] memory distance = new uint256[](numCircles);
-        for (uint256 i = 0; i < numCircles; i++) {
             distance[i] = uint256(keccak256(abi.encodePacked(_tokenId, "distance", i))) % 80 + 40;
         }
 
-        // Generate random rotation speed value based on the token ID
-        uint256 rotationSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "rotationSpeed"))) % 30 + 1;
+        return CommonValues(hue, rotationSpeed, colorChangeSpeed, numCircles, radius, distance);
+    }
 
-        // Generate random color change speed value based on the token ID
-        uint256 colorChangeSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "colorChangeSpeed"))) % 10 + 1;
+    function generateSVG(uint256 _tokenId) internal pure returns (string memory) {
+        CommonValues memory commonValues = generateCommonValues(_tokenId);
+
+        // Generate the fill color string
+        string memory color = string(abi.encodePacked("hsl(", Strings.toString(commonValues.hue), ",", Strings.toString(50), "%,54%)"));
 
         // Generate the SVG string with multiple circles with random size, rotation speed, color change, and distance from center
         string memory svg = string(
@@ -63,9 +82,9 @@ contract AIORBIT is ERC721, Ownable {
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">',
                 '<rect width="320" height="320" fill="#000"/>',
                 '<g transform="translate(160,160)">',
-                generateCircle(radius, distance, rotationSpeed),
-                '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', Strings.toString(rotationSpeed), 's" repeatCount="indefinite"/>',
-                '<animate attributeName="fill" values="', color, ';hsl(', Strings.toString(hue + 120), ',', Strings.toString(sat), '%,54%);hsl(', Strings.toString(hue + 240), ',', Strings.toString(sat), '%,54%);', color, '" dur="', Strings.toString(colorChangeSpeed), 's" repeatCount="indefinite"/>',
+                generateCircle(commonValues.radius, commonValues.distance, commonValues.rotationSpeed),
+                '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', Strings.toString(commonValues.rotationSpeed), 's" repeatCount="indefinite"/>',
+                '<animate attributeName="fill" values="', color, ';hsl(', Strings.toString(commonValues.hue + 120), ',', Strings.toString(50), '%,54%);hsl(', Strings.toString(commonValues.hue + 240), ',', Strings.toString(50), '%,54%);', color, '" dur="', Strings.toString(commonValues.colorChangeSpeed), 's" repeatCount="indefinite"/>',
                 '</g>',
                 '</svg>'
             )
@@ -82,11 +101,14 @@ contract AIORBIT is ERC721, Ownable {
             // Compute the rotation value directly within the loop
             uint256 rotation = uint256(keccak256(abi.encodePacked(i, "rotation"))) % 360;
 
+            // Ensure duration is positive
+            uint256 duration = (_animationDuration > i * 2) ? (_animationDuration - i * 2) : 1;
+
             string memory circle = string(
                 abi.encodePacked(
                     '<circle cx="', Strings.toString(160 + _distance[i]), '" cy="', Strings.toString(160), '" r="', Strings.toString(_radius[i]), '" fill="none" stroke="hsl(', Strings.toString(rotation), ',50%,54%)" stroke-width="2">',
-                    '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', Strings.toString(_animationDuration - i * 2), 's" repeatCount="indefinite"/>',
-                    '<animate attributeName="stroke" values="hsl(', Strings.toString((rotation + 120) % 360), ',50%,54%);hsl(', Strings.toString((rotation + 240) % 360), ',50%,54%);hsl(', Strings.toString(rotation), ',50%,54%)" dur="', Strings.toString(_animationDuration - i * 2), 's" repeatCount="indefinite"/>',
+                    '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', Strings.toString(duration), 's" repeatCount="indefinite"/>',
+                    '<animate attributeName="stroke" values="hsl(', Strings.toString((rotation + 120) % 360), ',50%,54%);hsl(', Strings.toString((rotation + 240) % 360), ',50%,54%);hsl(', Strings.toString(rotation), ',50%,54%)" dur="', Strings.toString(duration), 's" repeatCount="indefinite"/>',
                     '</circle>'
                 )
             );
@@ -96,59 +118,20 @@ contract AIORBIT is ERC721, Ownable {
         return circles;
     }
 
-    function mint(uint256 _numTokens) public {
-        require(_totalTokensMinted.current() < MAX_TOKENS, "All tokens have been minted");
-        require(balanceOf(msg.sender) + _numTokens <= MAX_TOKENS_PER_WALLET, "Cannot mint more tokens than allowed per wallet");
-
-        for (uint256 i = 0; i < _numTokens; i++) {
-            uint256 tokenId = _totalTokensMinted.current() + 1;
-            _safeMint(msg.sender, tokenId);
-            _totalTokensMinted.increment();
-        }
-    }
-
-    function royaltyInfo(uint256 _salePrice) external view returns (address receiver, uint256 royaltyAmount) {
-        receiver = owner();
-        royaltyAmount = (_salePrice * ROYALTY_FEE_PERCENT) / 100;
-    }
-
     function generateAttributes(uint256 _tokenId) internal pure returns (string memory) {
-        uint256[] memory radius = generateRadiusValues(_tokenId);
-        uint256[] memory distance = generateDistanceValues(_tokenId);
-
-        uint256 hue = uint256(keccak256(abi.encodePacked(_tokenId, "hue"))) % 360;
-        uint256 rotationSpeed = uint256(keccak256(abi.encodePacked(_tokenId))) % 30 + 1;
-        uint256 colorChangeSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "colorChangeSpeed"))) % 10 + 1;
+        CommonValues memory commonValues = generateCommonValues(_tokenId);
 
         string memory attributes = string(
             abi.encodePacked(
-                '{"trait_type": "distance", "value": "', Strings.toString(distance[0]), ' - ', Strings.toString(distance[distance.length - 1]), ' pixels"},',
-                '{"trait_type": "radius", "value": "', Strings.toString(radius[0]), ' - ', Strings.toString(radius[radius.length - 1]), ' pixels"},',
-                '{"trait_type": "rotation_speed", "value": "', Strings.toString(rotationSpeed), ' seconds"},',
-                '{"trait_type": "color", "value": "', Strings.toString(hue), ' degrees"},',
-                '{"trait_type": "color_change_speed", "value": "', Strings.toString(colorChangeSpeed), ' seconds"}'
+                '{"trait_type": "distance", "value": "', Strings.toString(commonValues.distance[0]), ' - ', Strings.toString(commonValues.distance[commonValues.distance.length - 1]), ' pixels"},',
+                '{"trait_type": "radius", "value": "', Strings.toString(commonValues.radius[0]), ' - ', Strings.toString(commonValues.radius[commonValues.radius.length - 1]), ' pixels"},',
+                '{"trait_type": "rotation_speed", "value": "', Strings.toString(commonValues.rotationSpeed), ' seconds"},',
+                '{"trait_type": "color", "value": "', Strings.toString(commonValues.hue), ' degrees"},',
+                '{"trait_type": "color_change_speed", "value": "', Strings.toString(commonValues.colorChangeSpeed), ' seconds"}'
             )
         );
 
         return attributes;
-    }
-
-    function generateRadiusValues(uint256 _tokenId) internal pure returns (uint256[] memory) {
-        uint256 numCircles = uint256(keccak256(abi.encodePacked(_tokenId, "numCircles"))) % 3 + 3;
-        uint256[] memory radius = new uint256[](numCircles);
-        for (uint256 i = 0; i < numCircles; i++) {
-            radius[i] = uint256(keccak256(abi.encodePacked(_tokenId, "radius", i))) % 40 + 20;
-        }
-        return radius;
-    }
-
-    function generateDistanceValues(uint256 _tokenId) internal pure returns (uint256[] memory) {
-        uint256 numCircles = uint256(keccak256(abi.encodePacked(_tokenId, "numCircles"))) % 3 + 3;
-        uint256[] memory distance = new uint256[](numCircles);
-        for (uint256 i = 0; i < numCircles; i++) {
-            distance[i] = uint256(keccak256(abi.encodePacked(_tokenId, "distance", i))) % 80 + 40;
-        }
-        return distance;
     }
 
     function tokenURI(uint256 _tokenId) public view override returns (string memory) {
