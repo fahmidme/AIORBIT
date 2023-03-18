@@ -28,15 +28,19 @@ contract AIORBIT is ERC721, Ownable {
         uint256[] strokeWidth;
     }
 
-    function mint(uint256 _numTokens) public {
+    function _mint(uint256 _numTokens, address _to) internal {
         require(_totalTokensMinted.current() < MAX_TOKENS, "All tokens have been minted");
-        // require(balanceOf(msg.sender) + _numTokens <= MAX_TOKENS_PER_WALLET, "Cannot mint more tokens than allowed per wallet");
+        require(balanceOf(_to) + _numTokens <= MAX_TOKENS_PER_WALLET, "Cannot mint more tokens than allowed per wallet");
 
         for (uint256 i = 0; i < _numTokens; i++) {
             uint256 tokenId = _totalTokensMinted.current() + 1;
-            _safeMint(msg.sender, tokenId);
+            _safeMint(_to, tokenId);
             _totalTokensMinted.increment();
         }
+    }
+
+    function mint(uint256 _numTokens) public {
+        _mint(_numTokens, msg.sender);
     }
 
     function royaltyInfo(uint256 _salePrice) external view returns (address receiver, uint256 royaltyAmount) {
@@ -46,7 +50,7 @@ contract AIORBIT is ERC721, Ownable {
 
     function generateCommonValues(uint256 _tokenId) internal pure returns (CommonValues memory) {
         uint256 hue = uint256(keccak256(abi.encodePacked(_tokenId, "hue"))) % 360;
-        uint256 rotationSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "rotationSpeed"))) % 30 + 1;
+        uint256 rotationSpeed = uint256(keccak256(abi.encodePacked(_tokenId, "rotationSpeed"))) % 11 + 5;
 
         uint256 numCircles = uint256(keccak256(abi.encodePacked(_tokenId, "numCircles"))) % 3 + 3;
         uint256[] memory radius = new uint256[](numCircles);
@@ -65,43 +69,48 @@ contract AIORBIT is ERC721, Ownable {
     function generateSVG(uint256 _tokenId) internal pure returns (string memory) {
         CommonValues memory commonValues = generateCommonValues(_tokenId);
 
-        // Generate the SVG string with multiple circles with random size, rotation speed, distance from center, and stroke-width
         string memory svg = string(
             abi.encodePacked(
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 320">',
                 '<rect width="320" height="320" fill="#000"/>',
-                '<g transform="translate(0,0)">',
-                generateCircle(commonValues.radius, commonValues.distance, commonValues.strokeWidth, commonValues.rotationSpeed),
-                '</g>',
-                '</svg>'
+                '<g transform="translate(0,0)">'
             )
         );
 
-        return svg;
-    }
+        for (uint256 i = 0; i < commonValues.numCircles; i++) {
+            uint256 duration = (commonValues.rotationSpeed > i * 2) ? (commonValues.rotationSpeed - i * 2) : 1;
 
-    function generateCircle(uint256[] memory _radius, uint256[] memory _distance, uint256[] memory _strokeWidth, uint256 _animationDuration) internal pure returns (string memory) {
-        require(_radius.length == _distance.length && _radius.length == _strokeWidth.length, "Arrays must have the same length");
+            uint256 hueStep = 360 / commonValues.numCircles;
+            uint256 hue = (uint256(keccak256(abi.encodePacked(_tokenId, "hue"))) + (i * hueStep)) % 360;
+            uint256 sat = uint256(keccak256(abi.encodePacked(_tokenId, "sat"))) % 50 + 50;
 
-        string memory circles = "";
-        for (uint256 i = 0; i < _radius.length; i++) {
-            // Compute the rotation value directly within the loop
-            uint256 rotation = uint256(keccak256(abi.encodePacked(i, "rotation"))) % 360;
+            string memory strokeColor = string(abi.encodePacked("hsl(", Strings.toString(hue), ",", Strings.toString(sat), "%,54%)"));
+            string memory strokeAnimate = string(abi.encodePacked("hsl(", Strings.toString(hue), ",50%,54%);", "hsl(", Strings.toString(hue/2), ",50%,54%);", "hsl(", Strings.toString(hue), ",50%,54%);"));
 
-            // Ensure duration is positive
-            uint256 duration = (_animationDuration > i * 2) ? (_animationDuration - i * 2) : 1;
+            uint256 circleX = 160 - commonValues.distance[i] + commonValues.radius[i] + commonValues.strokeWidth[i];
+            uint256 circleY = circleX;
+
+            string memory circleXStr = Strings.toString(circleX);
+            string memory circleYStr = Strings.toString(circleY);
+            string memory radiusStr = Strings.toString(commonValues.radius[i]);
+            string memory strokeWidthStr = Strings.toString(commonValues.strokeWidth[i]);
+            string memory durationStr = Strings.toString(duration);
 
             string memory circle = string(
                 abi.encodePacked(
-                    '<circle cx="', Strings.toString(160 + _distance[i]), '" cy="', Strings.toString(160 + _distance[i]), '" r="', Strings.toString(_radius[i]), '" fill="none" stroke="hsl(', Strings.toString(rotation), ',50%,54%)" stroke-width="', Strings.toString(_strokeWidth[i]), '">',
-                    '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', Strings.toString(duration), 's" repeatCount="indefinite"/>',
+                    '<circle cx="', circleXStr, '" cy="', circleYStr, '" r="', radiusStr, '" fill="none" stroke="', strokeColor, '" stroke-width="', strokeWidthStr, '">',
+                    '<animateTransform attributeName="transform" type="rotate" from="0 160 160" to="360 160 160" dur="', durationStr, 's" repeatCount="indefinite"/>',
+                    '<animate attributeName="stroke" values="', strokeAnimate, '" dur="', durationStr, 's" repeatCount="indefinite"/>',
                     '</circle>'
                 )
             );
-            circles = string(abi.encodePacked(circles, circle));
+
+            svg = string(abi.encodePacked(svg, circle));
         }
 
-        return circles;
+        svg = string(abi.encodePacked(svg, '</g>', '</svg>'));
+
+        return svg;
     }
 
     function generateAttributes(uint256 _tokenId) internal pure returns (string memory) {
@@ -112,7 +121,7 @@ contract AIORBIT is ERC721, Ownable {
                 '{"trait_type": "distance", "value": "', Strings.toString(commonValues.distance[0]), ' - ', Strings.toString(commonValues.distance[commonValues.distance.length - 1]), ' pixels"},',
                 '{"trait_type": "radius", "value": "', Strings.toString(commonValues.radius[0]), ' - ', Strings.toString(commonValues.radius[commonValues.radius.length - 1]), ' pixels"},',
                 '{"trait_type": "rotation_speed", "value": "', Strings.toString(commonValues.rotationSpeed), ' seconds"},',
-                '{"trait_type": "color", "value": "', Strings.toString(commonValues.hue), ' degrees"},',
+                '{"trait_type": "color", "value": "hsl(', Strings.toString(commonValues.hue), ',50%,54%)"},',
                 '{"trait_type": "stroke_width", "value": "', Strings.toString(commonValues.strokeWidth[0]), ' - ', Strings.toString(commonValues.strokeWidth[commonValues.strokeWidth.length - 1]), ' pixels"}'
             )
         );
